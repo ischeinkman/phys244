@@ -1,0 +1,18 @@
+
+#define HBAR (1.0)
+#define M (1.0)
+#define DX (0.1)
+#define DT (0.001)
+#define WIDTH (500)
+#define HEIGHT (500)
+#define FRAMES (500)
+#define LAYOUT_X (32)
+#define LAYOUT_Y (32)
+#define SLIT_HEIGHT (-1)
+#define SLIT_1_START (100)
+#define SLIT_1_END (100)
+#define SLIT_2_START (100)
+#define SLIT_2_END (100)
+#define DISPATCH_X (128)
+#define DISPATCH_Y (128)
+    
