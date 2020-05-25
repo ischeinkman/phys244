@@ -1,0 +1,27 @@
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+#include "consts.h"
+
+#define WORKGROUP_SIZE (LAYOUT_X * LAYOUT_Y)
+layout(local_size_x = LAYOUT_X * LAYOUT_Y, local_size_y = 1, local_size_z = 1) in;
+
+#define WORKGROUP_WIDTH (uint(WIDTH % LAYOUT_X  != 0) + WIDTH/LAYOUT_X)
+#define WORKGROUP_HEIGHT (uint(HEIGHT % LAYOUT_Y  != 0) + HEIGHT/LAYOUT_Y)
+#define NUM_POINTS (WORKGROUP_WIDTH * WORKGROUP_HEIGHT)
+
+layout(set=0, binding=0) buffer ProbabilitySums {
+    float data[]; 
+} p_sums;
+
+
+void main() {
+    uint my_idx = gl_LocalInvocationIndex;
+    for(uint current_batch = NUM_POINTS; current_batch > 0; current_batch /= 2) {
+        if(my_idx < current_batch/2) {
+            p_sums.data[my_idx] += p_sums.data[current_batch/2 + my_idx];
+        }
+        memoryBarrier();
+        barrier();
+    }
+    p_sums.data[NUM_POINTS] = p_sums.data[0];
+}

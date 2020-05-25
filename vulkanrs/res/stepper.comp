@@ -1,0 +1,143 @@
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+#extension GL_EXT_control_flow_attributes : enable
+#include "consts.h"
+
+// For the sake of documentation, we add default values to all
+// DEFINE-based constants wrapped inside ifndef blocks. 
+// This allows for the constants to not be "magic" while still
+// allowing for recompilation with different values. 
+#ifndef HBAR
+    #define HBAR 1
+#endif
+
+#ifndef M 
+    #define M 1
+#endif 
+
+#ifndef DX
+    #define DX 1
+#endif 
+
+#ifndef DT
+    #define DT 1
+#endif 
+
+#ifndef WIDTH
+    #define WIDTH 1
+#endif 
+#ifndef HEIGHT
+    #define HEIGHT 1
+#endif 
+#ifndef SLIT_HEIGHT
+    #define SLIT_HEIGHT 1
+#endif 
+#ifndef SLIT_1_START
+    #define SLIT_1_START 1
+#endif 
+#ifndef SLIT_1_END
+    #define SLIT_1_END 1
+#endif 
+#ifndef SLIT_2_START
+    #define SLIT_2_START 1
+#endif 
+#ifndef SLIT_2_END
+    #define SLIT_2_END 1
+#endif 
+
+#ifndef LAYOUT_X
+    #define LAYOUT_X (1)
+#endif
+
+#ifndef LAYOUT_Y
+    #define LAYOUT_Y (1)
+#endif
+
+// Macros to detect if this point needs to be computed 
+#define on_border(x, y) (x <= 0 || y <= 0 || (x) >= WIDTH -1 || (y) >= HEIGHT -1 )
+#define in_slit(x, y) ( (y) == SLIT_HEIGHT && (( (x) >= SLIT_1_START && x <= SLIT_2_END)  || ( (x) >= SLIT_2_START && x <= SLIT_2_END)))
+#define OFFSET_TO(x, y) ( (x) + (y) * WIDTH)
+
+
+#define oob(x, y) (x >= WIDTH || y >= HEIGHT)
+
+// Coefficients of our finite-difference stepper
+#define CUR_COEFF ( \
+    vec2 ( \
+        1.0,  \
+        -2.0 * HBAR * DT/(M * DX * DX) \
+    ) \
+)
+#define NEIGHBOR_COEFF (vec2 (0.0,  (HBAR * DT)/(2.0 * M * DX * DX)))
+
+// Complex multiplication via vec2
+#define COMPLEX_MUL(a, b) ( \
+    vec2( \
+        a.x * b.x - a.y * b.y, \
+        a.x * b.y + a.y * b.x  \
+    ) \
+)
+
+#define WORKGROUP_SIZE (LAYOUT_X * LAYOUT_Y)
+#define WORKGROUP_WIDTH (uint(WIDTH % LAYOUT_X  != 0) + WIDTH/LAYOUT_X)
+#define WORKGROUP_HEIGHT (uint(HEIGHT % LAYOUT_Y  != 0) + HEIGHT/LAYOUT_Y)
+#define RELEVANT_WORKGROUPS (WORKGROUP_WIDTH * WORKGROUP_HEIGHT)
+#define NUM_WORKGROUPS (DISPATCH_X * DISPATCH_Y)
+layout(local_size_x = LAYOUT_X, local_size_y = LAYOUT_Y, local_size_z = 1) in;
+
+
+layout(set=0, binding=0) buffer InputData {
+    vec2 data[];
+} input_data;
+
+
+layout(set=0, binding=1) buffer ProbabilitySums {
+    coherent float workgroup_sums[];
+} p_sums;
+
+layout(std140, push_constant) uniform AllocationOffset {
+    uint idx;
+} frame_num;
+
+shared float WORKGROUP_PARTIALS[WORKGROUP_SIZE];
+
+void main() {
+    uint input_offset = frame_num.idx * WIDTH * HEIGHT;
+    uint output_offset = (frame_num.idx + 1) * WIDTH * HEIGHT;
+    uvec3 g_idx = gl_GlobalInvocationID;
+    uint x_idx = g_idx.x; 
+    uint y_idx = g_idx.y; 
+    float coeff = inversesqrt(p_sums.workgroup_sums[RELEVANT_WORKGROUPS]);
+
+    vec2 retvl = vec2(-0.0, 0.0);
+    vec2 cur_value = input_data.data[input_offset + OFFSET_TO(x_idx, y_idx)];
+    if(!(on_border(x_idx, y_idx) || in_slit(x_idx, y_idx))) {
+        vec2 left_value = input_data.data[input_offset + OFFSET_TO( (x_idx -1), y_idx)];
+        vec2 right_value = input_data.data[input_offset + OFFSET_TO( (x_idx +1), y_idx)];
+        vec2 bottom_value = input_data.data[input_offset + OFFSET_TO(x_idx , (y_idx -1))];
+        vec2 top_value = input_data.data[input_offset + OFFSET_TO(x_idx, (y_idx +1))];
+
+        vec2 nsum = left_value + right_value + top_value + bottom_value;
+
+        vec2 term_a = COMPLEX_MUL(CUR_COEFF, cur_value);
+        vec2 term_b = COMPLEX_MUL(NEIGHBOR_COEFF, nsum);
+        retvl = term_a + term_b;
+        retvl *= coeff;
+        input_data.data[output_offset + OFFSET_TO(x_idx, y_idx)] = retvl;
+    }
+    float cur_p = dot(retvl, retvl) ;
+    WORKGROUP_PARTIALS[gl_LocalInvocationIndex] = max(cur_p, 0.0);
+    barrier();
+    memoryBarrier();
+    uint wk_x = gl_WorkGroupID.x;
+    uint wk_y = gl_WorkGroupID.y;
+    uint wk_width = WORKGROUP_WIDTH;
+    uint my_offset = wk_x + wk_y * wk_width;
+    float msum = 0.0;
+    for(uint k = 0; k < WORKGROUP_SIZE; k++) {
+        uint other_idx = (gl_LocalInvocationIndex + k) % WORKGROUP_SIZE;
+        float found = WORKGROUP_PARTIALS[other_idx];
+        msum += found;
+    }
+    if(my_offset < RELEVANT_WORKGROUPS) p_sums.workgroup_sums[my_offset] = msum;
+}
