@@ -1,2 +1,9 @@
 vulkanrs/target/*
 .vscode/
+*.spv
+hw2020-04-21/
+hw2020-04-21.zip
+*.out
+*.data
+*.txt
+scratch*

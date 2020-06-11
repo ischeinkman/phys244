@@ -33,6 +33,9 @@ mod cpu;
 
 use std::sync::Arc;
 
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::time::Instant;
 use vulkano::buffer::{
     BufferAccess, BufferSlice, BufferUsage, CpuAccessibleBuffer, DeviceLocalBuffer,
     TypedBufferAccess,
@@ -47,7 +50,6 @@ use vulkano::instance::{
 use vulkano::pipeline::ComputePipeline;
 use vulkano::sync::GpuFuture;
 fn main() {
-    //cpu::run();
     run_gpu();
 }
 
@@ -141,13 +143,15 @@ fn build_summer_command(
 
 fn run_gpu() {
     debug_assert!(IS_STABLE, "Coeff: {:?}", STABILITY_COEFF);
+    let mut initial_frame = vec![MyComplex::zero(); FRAME_SIZE];
+    cpu::initialize(&mut initial_frame);
+    let initial_p = cpu::sum_p(&initial_frame);
+
+    let start = Instant::now();
     let instance = load_instance();
     let (device, queue_family, mut queues) = load_vulkan(&instance);
     let queue = queues.next().unwrap();
 
-    let mut initial_frame = vec![MyComplex::zero(); FRAME_SIZE];
-    cpu::initialize(&mut initial_frame);
-    let initial_p = cpu::sum_p(&initial_frame);
     let raw_allocation = create_framebuffer(&device, &initial_frame);
 
     let mut data = [0.0; NUM_WORKGROUPS + 1];
@@ -183,28 +187,8 @@ fn run_gpu() {
         queue_family.clone(),
     ));
 
-    let mfut = {
-        let command_buffer =
-            AutoCommandBufferBuilder::primary(device.clone(), queue_family.clone())
-                .unwrap()
-                .dispatch(my_consts::DISPATCH_LAYOUT, pipeline.clone(), set.clone(), 0)
-                .unwrap()
-                .build()
-                .unwrap();
-        let retvl = command_buffer
-            .execute(queue.clone())
-            .unwrap()
-            .then_execute_same_queue(summer_buffer.clone())
-            .unwrap();
-        retvl.flush().unwrap();
-        retvl
-    };
-    let mut mfut: Box<dyn GpuFuture> = Box::new(mfut);
-    let mfutr = Arc::new(mfut.then_signal_fence_and_flush().unwrap());
-    let mut cur_signal = mfutr.clone();
-    mfut = Box::new(mfutr);
-    for idx in 0..my_consts::NUM_FRAMES {
-        eprintln!("KKK: {}", idx);
+    let mut current_queue: Box<dyn GpuFuture> = Box::new(vulkano::sync::now(device.clone()));
+    for idx in 0..my_consts::NUM_FRAMES -1{
         let command_buffer =
             AutoCommandBufferBuilder::primary(device.clone(), queue_family.clone())
                 .unwrap()
@@ -217,112 +201,49 @@ fn run_gpu() {
                 .unwrap()
                 .build()
                 .unwrap();
-        let nxtfut = command_buffer
-            .execute_after(mfut, queue.clone())
+        let nxtfut = current_queue
+            .then_execute(queue.clone(), command_buffer)
             .unwrap()
+            .then_signal_semaphore()
             .then_execute_same_queue(summer_buffer.clone())
             .unwrap();
-        if let Ok(()) = cur_signal.wait(None) {
-            let wrapped_nxt : Box<dyn GpuFuture> = Box::new(nxtfut);
-            let wrapped_nxt = Arc::new(wrapped_nxt.then_signal_fence_and_flush().unwrap());
-            cur_signal = wrapped_nxt.clone();
-            mfut = Box::new(wrapped_nxt);
+        if idx == my_consts::NUM_FRAMES - 1{
+            current_queue = Box::new(nxtfut);
         }
         else {
-            nxtfut.flush().unwrap();
-            mfut = Box::new(nxtfut);
-
+            current_queue = Box::new(nxtfut.then_signal_semaphore());
         }
     }
-
-    mfut.then_signal_fence_and_flush()
+    current_queue
+        .then_signal_fence_and_flush()
         .unwrap()
         .wait(None)
         .unwrap();
-
+    let end = Instant::now();
     println!(
-        "PBuffer ({} / {}): ",
-        pbuffer.read().unwrap().len(),
-        pbuffer.size()
+        "{} / {}",
+        end.duration_since(start).as_millis(),
+        (end.duration_since(start).as_millis() as f32) / (my_consts::NUM_FRAMES as f32)
     );
-
-    let wk_to_gridstart = |idx: usize| {
-        let wk_x = idx % my_consts::DISPATCH_LAYOUT[0] as usize;
-        let gbl_x = wk_x * my_consts::SHADER_LAYOUT[0];
-        let wk_y = idx / my_consts::DISPATCH_LAYOUT[1] as usize;
-        let gbl_y = wk_y * my_consts::SHADER_LAYOUT[1];
-        (gbl_x, gbl_y)
-    };
-
-    pbuffer
-        .read()
-        .unwrap()
-        .iter()
-        .copied()
-        .enumerate()
-        .filter(|(_, p)| *p != 0.0)
-        .for_each(|(idx, p)| {
-            let grid = wk_to_gridstart(idx);
-            println!("    {} /({}, {}) : {}", idx, grid.0, grid.1, p);
-        });
-    println!(
-        "Inbuffer {} / {}: ",
-        raw_allocation.read().unwrap().len(),
-        raw_allocation.size()
-    );
-    raw_allocation
-        .read()
-        .unwrap()
-        .iter()
-        .copied()
-        .enumerate()
-        .take(FRAME_SIZE)
-        .map(|(idx, p)| ((idx % my_consts::WIDTH, idx / my_consts::WIDTH), p))
-        .filter(|(_, p)| p[0] * p[0] + p[1] * p[1] != 0.0)
-        .for_each(|v| println!("    {:?}", v));
-    println!("Outbuffer :");
-    raw_allocation
-        .read()
-        .unwrap()
-        .iter()
-        .copied()
-        .skip(FRAME_SIZE)
-        .take(FRAME_SIZE)
-        .enumerate()
-        .map(|(idx, p)| ((idx % my_consts::WIDTH, idx / my_consts::WIDTH), p))
-        .filter(|(_, p)| p[0] * p[0] + p[1] * p[1] != 0.0)
-        .for_each(|v| println!("    {:?}", v));
-    let mut psum_a: f32 = 0.0;
-    for a in pbuffer.read().unwrap().iter().take(256) {
-        psum_a += a;
+    let mut output_file = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open("vulkan_out.data")
+        .unwrap();
+    let framebuffer_handle = raw_allocation.read().unwrap();
+    let frames_iter = framebuffer_handle.chunks_exact(FRAME_SIZE);
+    for current_frame in frames_iter {
+        let bbuffer = write_frame(current_frame);
+        output_file.write_all(&bbuffer).unwrap();
     }
-    let psum_b: f32 = raw_allocation
-        .read()
-        .unwrap()
-        .iter()
-        .skip(FRAME_SIZE)
-        .take(FRAME_SIZE)
-        .copied()
-        .map(|[na, nb]| na * na + nb * nb)
-        .sum();
-    println!("True : {}", psum_b);
-    println!("Found: {} ", psum_a);
-    for idx in 0..initial_frame.len() {
-        let bufv = raw_allocation.read().unwrap()[idx];
-        if bufv[0] != initial_frame[idx].re && bufv[1] != initial_frame[idx].im {
-            println!("MIX? {:?} => {:?} v {:?}", idx, bufv, initial_frame[idx]);
-        }
-    }
+}
 
-    println!("Post summer pbuffer:");
-    pbuffer
-        .read()
-        .unwrap()
-        .iter()
-        .copied()
-        .enumerate()
-        .filter(|(_, p)| *p != 0.0)
-        .for_each(|(idx, p)| {
-            println!("    {} : {}", idx, p);
-        });
+fn write_frame(frame: &[[f32; 2]]) -> Vec<u8> {
+    let mut retvl = Vec::with_capacity(frame.len() * 8);
+    for cur in frame {
+        let n = MyComplex::new(cur[0], cur[1]);
+        retvl.extend_from_slice(&n.to_bytes());
+    }
+    retvl
 }
