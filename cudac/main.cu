@@ -68,7 +68,7 @@
 
 #define OFFSET_FOR(xidx, yidx) (xidx + (yidx * WIDTH))
 
-#define CLOCK_TO_MILLIS(clk) (( (clk) * 1000) / CLOCKS_PER_SEC)
+#define CLOCK_TO_MILLIS(clk) ( (long) (( ( (float) clk) * 1000.0) / CLOCKS_PER_SEC) )
 
 #ifndef on_border
 #define on_border(xidx, yidx) ((xidx == 0 || yidx == 0 || xidx >= WIDTH - 1 || yidx >= HEIGHT - 1))
@@ -165,9 +165,7 @@ int main(int argc, const char **argv)
     dim3 grid(DISPATCH_X, DISPATCH_Y);
 
     for(uint idx = 0; idx < NUM_FRAMES-1; idx++) {
-        fprintf(stderr, "FRAME START: %ld\n", idx);
         stepper<<< grid, threads >>>(raw_allocation, pbuffer, idx);
-        fprintf(stderr, "FRAME START: %ld A\n", idx);
         checkCudaErrors( cudaDeviceSynchronize() );
         summer<<< grid, threads >>>(pbuffer);
         checkCudaErrors( cudaDeviceSynchronize() );
@@ -177,7 +175,8 @@ int main(int argc, const char **argv)
     checkCudaErrors(cudaMemcpy(  cpu_alloc, raw_allocation, NUM_FRAMES * FRAME_SIZE * sizeof(MyComplex), cudaMemcpyDeviceToHost ));
 
     clock_t end = clock();
-    printf("%d / %d\n", CLOCK_TO_MILLIS(end - start), CLOCK_TO_MILLIS(end - start)/NUM_FRAMES);
+    clock_t diff = end - start; 
+    printf("%d / %d\n", CLOCK_TO_MILLIS(diff), CLOCK_TO_MILLIS(diff)/NUM_FRAMES);
 
     FILE * outfile = fopen("cuda_out.data", "w");
     fwrite(cpu_alloc, sizeof(MyComplex), NUM_FRAMES * FRAME_SIZE, outfile);
