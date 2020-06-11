@@ -84,7 +84,7 @@ def compile_rust(conf, dr):
         msg = RUST_FMT_STR.format_map(conf)
         f.write(msg)
     subprocess.check_call(
-        'cargo build --release'.format_map(conf), shell=True
+        'cargo clean && cargo build --release'.format_map(conf), shell=True
     )
     os.chdir('..')
 
