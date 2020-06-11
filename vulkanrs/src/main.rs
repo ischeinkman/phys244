@@ -188,7 +188,7 @@ fn run_gpu() {
     ));
 
     let mut current_queue: Box<dyn GpuFuture> = Box::new(vulkano::sync::now(device.clone()));
-    for idx in 0..my_consts::NUM_FRAMES -1{
+    for idx in 0..my_consts::NUM_FRAMES - 2 {
         let command_buffer =
             AutoCommandBufferBuilder::primary(device.clone(), queue_family.clone())
                 .unwrap()
@@ -207,12 +207,29 @@ fn run_gpu() {
             .then_signal_semaphore()
             .then_execute_same_queue(summer_buffer.clone())
             .unwrap();
-        if idx == my_consts::NUM_FRAMES - 1{
-            current_queue = Box::new(nxtfut);
-        }
-        else {
-            current_queue = Box::new(nxtfut.then_signal_semaphore());
-        }
+        current_queue = Box::new(nxtfut.then_signal_semaphore());
+    }
+    {
+        let idx = my_consts::NUM_FRAMES - 2;
+        let command_buffer =
+            AutoCommandBufferBuilder::primary(device.clone(), queue_family.clone())
+                .unwrap()
+                .dispatch(
+                    my_consts::DISPATCH_LAYOUT,
+                    pipeline.clone(),
+                    set.clone(),
+                    idx as u32,
+                )
+                .unwrap()
+                .build()
+                .unwrap();
+        let nxtfut = current_queue
+            .then_execute(queue.clone(), command_buffer)
+            .unwrap()
+            .then_signal_semaphore()
+            .then_execute_same_queue(summer_buffer.clone())
+            .unwrap();
+        current_queue = Box::new(nxtfut);
     }
     current_queue
         .then_signal_fence_and_flush()
