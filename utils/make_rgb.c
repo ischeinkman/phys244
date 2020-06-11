@@ -39,8 +39,8 @@
 #ifndef HEIGHT
 #define HEIGHT (100)
 #endif
-#ifndef FRAMES
-#define FRAMES (500)
+#ifndef NUM_FRAMES
+#define NUM_FRAMES (500)
 #endif
 
 #define FRAME_SIZE (WIDTH * HEIGHT)
@@ -72,7 +72,7 @@ int main(int argc, char **argv)
     uint8_t *inmap;
     MyComplex *buffer;
     KILL_ON_NULL(buffer = (MyComplex *)malloc(FRAME_SIZE * sizeof(MyComplex)));
-    for (int cur_frame = 0; cur_frame < FRAMES; cur_frame++)
+    for (int cur_frame = 0; cur_frame < NUM_FRAMES; cur_frame++)
     {
         int complex_offset = cur_frame * FRAME_CMPBT;
         int pixel_offset = cur_frame * FRAME_BYTES;

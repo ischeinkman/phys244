@@ -89,7 +89,7 @@ def compile_rust(conf, dr):
     os.chdir('..')
 
 
-def compile_c(conf, fl):
+def compile_c_helpers(conf, fl):
     C_PARAMS_FMT = '''
     -DHBAR='({hbar})'
     -DM='({m})'
@@ -97,7 +97,7 @@ def compile_c(conf, fl):
     -DDT='({dt})'
     -DWIDTH='({width})'
     -DHEIGHT='({height})'
-    -DFRAMES='({frames})'
+    -DNUM_FRAMES='({frames})'
     -DSLIT_HEIGHT='({slits[height]})'
     -DSLIT_1_START='({slits[1][start]})'
     -DSLIT_1_END='({slits[1][end]})'
@@ -119,14 +119,14 @@ def compile_glsl(conf, fl):
     -DDT='({dt})'
     -DWIDTH='({width})'
     -DHEIGHT='({height})'
-    -DFRAMES='({frames})'
+    -DNUM_FRAMES='({frames})'
     -DSLIT_HEIGHT='({slits[height]})'
     -DSLIT_1_START='({slits[1][start]})'
     -DSLIT_1_END='({slits[1][end]})'
     -DSLIT_2_START='({slits[2][start]})'
     -DSLIT_2_END='({slits[2][end]})'
     '''.replace('\n', ' ')
-    cmd = 'glslangValidator -o {}.spv {}.comp -V -g -e "main"'.format(
+    cmd = 'glslangValidator -o {}.spv {}.comp -V110 -g -e "main"'.format(
         fl, fl) + C_PARAMS_FMT.format_map(conf)
     subprocess.check_call(cmd, shell=True)
 
@@ -139,7 +139,7 @@ def output_glsl_include(conf, outfl):
 #define DT ({dt})
 #define WIDTH ({width})
 #define HEIGHT ({height})
-#define FRAMES ({frames})
+#define NUM_FRAMES ({frames})
 #define LAYOUT_X ({layout x})
 #define LAYOUT_Y ({layout y})
 #define SLIT_HEIGHT ({slits[height]})
@@ -154,6 +154,10 @@ def output_glsl_include(conf, outfl):
     outfh.write(HEADER_DEFS)
     outfh.close()
 
+def compile_cuda(conf, fl):
+    cmd = 'nvcc -o {} {}.cu -I cudac/ -I cudac/cuda-samples/Common/'.format(fl, fl)
+    subprocess.check_call(cmd, shell=True)
+
 
 if __name__ == '__main__':
     conf = get_config()
@@ -165,9 +169,10 @@ if __name__ == '__main__':
     if os.path.exists('vulkanrs.out'):
         os.unlink('vulkanrs.out')
     os.link('vulkanrs/target/release/vulkanrs', 'vulkanrs.out')
-    compile_c(conf, 'utils/videoencoder')
-    compile_c(conf, 'utils/make_rgb')
-    compile_c(conf, 'cudac/main')
+    compile_c_helpers(conf, 'utils/videoencoder')
+    compile_c_helpers(conf, 'utils/make_rgb')
+    output_glsl_include(conf, 'cudac/consts.h')
+    compile_cuda(conf, 'cudac/main')
     if os.path.exists('cudac.out'):
         os.unlink('cudac.out')
     os.link('cudac/main', 'cudac.out')

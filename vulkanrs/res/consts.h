@@ -5,7 +5,7 @@
 #define DT (0.001)
 #define WIDTH (500)
 #define HEIGHT (500)
-#define FRAMES (500)
+#define NUM_FRAMES (500)
 #define LAYOUT_X (32)
 #define LAYOUT_Y (32)
 #define SLIT_HEIGHT (-1)

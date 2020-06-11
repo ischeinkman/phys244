@@ -1,3 +1,4 @@
+#include "consts.h"
 #include <cuComplex.h>
 
 // For the sake of documentation, we add default values to all
@@ -50,10 +51,19 @@
     #define LAYOUT_Y (1)
 #endif
 
-// Macros to detect if this point needs to be computed 
-#define on_border(x, y) (x <= 0 || y <= 0 || (x) >= WIDTH -1 || (y) >= HEIGHT -1 )
-#define in_slit(x, y) ( (y) == SLIT_HEIGHT && (( (x) >= SLIT_1_START && x <= SLIT_2_END)  || ( (x) >= SLIT_2_START && x <= SLIT_2_END)))
-#define OFFSET_TO(x, y) ( (x) + (y) * WIDTH)
+// Macros to detect if this point needs to be computed
+#ifndef on_border 
+    #define on_border(x, y) (x <= 0 || y <= 0 || (x) >= WIDTH -1 || (y) >= HEIGHT -1 )
+#endif
+#ifndef in_slit
+    #define in_slit(x, y) ( (y) == SLIT_HEIGHT && (( (x) >= SLIT_1_START && x <= SLIT_2_END)  || ( (x) >= SLIT_2_START && x <= SLIT_2_END)))
+#endif
+
+#ifndef OFFSET_TO
+    #define OFFSET_TO(x, y) ( (x) + (y) * WIDTH)
+#endif
+
+#define dot(a, b) ( a.x * b.x + a.y * b.y )
 
 
 #define oob(x, y) (x >= WIDTH || y >= HEIGHT)
@@ -83,21 +93,24 @@
 // and CUDA's block is equivalent to GLSL/Vulkan 's workgroup.
 
 
-__global__ void stepper(float2 * input_data, float2 * output_data, float2 * p_sums) {
+__global__ void stepper(float2 * input_data, float * p_sums, uint frame_num) {
     __shared__ float WORKGROUP_PARTIALS[WORKGROUP_SIZE];
+    uint input_offset = frame_num * WIDTH * HEIGHT;
+    uint output_offset = (frame_num + 1) * WIDTH * HEIGHT;
+
     uint x_idx = blockIdx.x * blockDim.x + threadIdx.x; 
     uint y_idx = blockIdx.y * blockDim.y + threadIdx.y;
 
     uint local_idx = threadIdx.y * blockDim.x + threadIdx.x; 
-    float coeff = inversesqrt(p_sums[RELEVANT_WORKGROUPS]);
+    float coeff = rsqrt(p_sums[RELEVANT_WORKGROUPS]);
 
     float2 retvl = make_cuFloatComplex(-0.0, 0.0);
-    float2 cur_value = input_data[OFFSET_TO(x_idx, y_idx)];
+    float2 cur_value = input_data[input_offset + OFFSET_TO(x_idx, y_idx)];
     if(!(on_border(x_idx, y_idx) || in_slit(x_idx, y_idx))) {
-        float2 left_value = input_data[OFFSET_TO( (x_idx -1), y_idx)];
-        float2 right_value = input_data[OFFSET_TO( (x_idx +1), y_idx)];
-        float2 bottom_value = input_data[OFFSET_TO(x_idx , (y_idx -1))];
-        float2 top_value = input_data[OFFSET_TO(x_idx, (y_idx +1))];
+        float2 left_value = input_data[input_offset + OFFSET_TO( (x_idx -1), y_idx)];
+        float2 right_value = input_data[input_offset + OFFSET_TO( (x_idx +1), y_idx)];
+        float2 bottom_value = input_data[input_offset + OFFSET_TO(x_idx , (y_idx -1))];
+        float2 top_value = input_data[input_offset + OFFSET_TO(x_idx, (y_idx +1))];
 
         float2 nsum = make_cuFloatComplex(
             left_value.x + right_value.x + top_value.x + bottom_value.x, 
@@ -110,7 +123,7 @@ __global__ void stepper(float2 * input_data, float2 * output_data, float2 * p_su
             coeff * (term_a.x + term_b.x),
             coeff * (term_a.y + term_b.y)
         );
-        output_data[OFFSET_TO(x_idx, y_idx)] = retvl;
+        input_data[output_offset + OFFSET_TO(x_idx, y_idx)] = retvl;
     }
     float cur_p = dot(retvl, retvl) ;
     WORKGROUP_PARTIALS[local_idx] = max(cur_p, 0.0);

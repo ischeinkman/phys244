@@ -11,8 +11,8 @@
 #ifndef HEIGHT
     #define HEIGHT (100)
 #endif
-#ifndef FRAMES
-    #define FRAMES (500)
+#ifndef NUM_FRAMES
+    #define NUM_FRAMES (500)
 #endif
 
 #define FRAME_SIZE (WIDTH * HEIGHT)
@@ -105,7 +105,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "%d ", frame->linesize[kkk]);
     }
     fprintf(stderr, "\n");
-    for (int cur_tidx = 0; cur_tidx < FRAMES; cur_tidx++)
+    for (int cur_tidx = 0; cur_tidx < NUM_FRAMES; cur_tidx++)
     {
         uint8_t *frame_start = addr + (cur_tidx * FRAME_BYTES);
         #ifdef DBG_WRITE_FRAMES

@@ -1,4 +1,5 @@
 
+#include "consts.h"
 #define WORKGROUP_SIZE (LAYOUT_X * LAYOUT_Y)
 
 #define WORKGROUP_WIDTH (uint(WIDTH % LAYOUT_X  != 0) + WIDTH/LAYOUT_X)
@@ -10,9 +11,9 @@
 
 __global__ void summer(float * p_sums) {
     uint my_idx = threadIdx.x;
-    for(uint current_batch = NUM_POINTS; current_batch > 1 ; current_batch /=2) {
+    for(uint current_batch = NUM_POINTS; current_batch > 0 ; current_batch /=2) {
         if(my_idx < current_batch/2) {
-            p_sums.data[my_idx] += p_sums.data[current_batch/2 + my_idx];
+            p_sums[my_idx] += p_sums[current_batch/2 + my_idx];
         }
         __syncthreads();
     }

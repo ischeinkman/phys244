@@ -1,13 +1,14 @@
 #include <stdint.h>
 #include <memory.h>
 #include <stdio.h>
+#include <stddef.h>
 #include <stdlib.h>
 // This macro checks for endianness. 
 // It works by setting up a union of a 32 bit number and 4 byte array, setting the number to 1, 
 // and checking if that 1 is at the head of the array. 
 // TODO: check if this goes against the standard?
 #define IS_LE (((union {uint32_t num; uint8_t bytes[sizeof(uint32_t)]; }){num : 0x1}).bytes[0] == 1)
-#define IS_REAL_FIRST ( *((float * ) (& (MyComplex) {re : 1.0, im : 0.0})) == 1.0 )
+#define IS_REAL_FIRST ( offsetof(MyComplex, re) == 0 )
 
 typedef struct MyComplex
 {
@@ -47,7 +48,7 @@ static inline void MyComplex_read(uint8_t * raw_bytes, size_t bytes_len, MyCompl
 static inline void MyComplex_write(MyComplex * src, size_t num, uint8_t *output, size_t outlen)
 {
     size_t to_copy = outlen >= sizeof(MyComplex) * num ? num : outlen/sizeof(MyComplex); 
-    fprintf(stderr, "%d , %d => %d\n", outlen, num, to_copy);
+    fprintf(stderr, "%ld , %ld => %ld\n", outlen, num, to_copy);
     if(IS_LE && IS_REAL_FIRST) {
         size_t bytes = sizeof(MyComplex) * to_copy;
         memcpy(output, src, bytes);

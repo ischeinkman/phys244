@@ -1,4 +1,9 @@
 #include "mycomplex.h"
+#include "stepper.cu"
+#include "summer.cu"
+#include "consts.h"
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
 #include <math.h>
 #include <stdlib.h>
 #include <time.h>
@@ -28,8 +33,8 @@
 #define HEIGHT (500)
 #endif
 
-#ifndef FRAMES
-#define FRAMES (500)
+#ifndef NUM_FRAMES
+#define NUM_FRAMES (500)
 #endif
 
 #ifndef SLIT_HEIGHT
@@ -63,26 +68,25 @@
 
 #define OFFSET_FOR(xidx, yidx) (xidx + (yidx * WIDTH))
 
-#define CLOCK_TO_MILLIS(clk) ((clk * 1000) / CLOCKS_PER_SECOND)
-/*
-#[inline(always)]
-fn on_border(xidx: usize, yidx: usize) -> bool {
-    xidx == 0 || yidx == 0 || xidx >= WIDTH - 1 || yidx >= HEIGHT - 1
-}
+#define CLOCK_TO_MILLIS(clk) (( (clk) * 1000) / CLOCKS_PER_SEC)
 
-#[inline(always)]
-fn in_slit(x: usize, y: usize) -> bool {
-    let x = x as isize;
-    let y = y as isize;
-    y == SLIT_HEIGHT
-        && ((x >= SLIT_1_START && x <= SLIT_2_END) || (x >= SLIT_2_START && x <= SLIT_2_END))
-}
-*/
+#ifndef on_border
 #define on_border(xidx, yidx) ((xidx == 0 || yidx == 0 || xidx >= WIDTH - 1 || yidx >= HEIGHT - 1))
+#endif 
+
+#ifndef in_slit 
 #define in_slit(x, y) (                        \
     (y == SLIT_HEIGHT) &&                      \
     ((SLIT_1_START <= x && x <= SLIT_1_END) || \
      (SLIT_2_START <= x && x <= SLIT_2_END)))
+#endif 
+
+#ifndef NUM_WORKGROUPS
+#define NUM_WORKGROUPS (DISPATCH_X * DISPATCH_Y)
+#endif
+#ifndef RELEVANT_WORKGROUPS
+#define RELEVANT_WORKGROUPS (WORKGROUP_WIDTH * WORKGROUP_HEIGHT)
+#endif
 
 float sum_p(MyComplex *frame)
 {
@@ -126,14 +130,59 @@ void initialize(MyComplex *frame)
             }
         }
     }
+    normalize(frame);
 }
 
-int main(int argc, char **argv)
+float * createPbuffer(float initial_p) {
+    float * tmp = (float * ) calloc(NUM_WORKGROUPS + 1, sizeof(float));
+    tmp[RELEVANT_WORKGROUPS] = initial_p;
+    float * retvl;
+    checkCudaErrors(cudaMalloc(&retvl, (NUM_WORKGROUPS + 1) * sizeof(float) ));
+    checkCudaErrors(cudaMemcpy(retvl, tmp, (NUM_WORKGROUPS + 1) * sizeof(float), cudaMemcpyHostToDevice ));
+    free(tmp);
+    return retvl;
+}
+
+int main(int argc, const char **argv)
 {
-    printf("%s %s\n", IS_LE ? "T" : "F", IS_REAL_FIRST ? "T" : "F");
-    MyComplex *allocation = (MyComplex *)calloc(FRAME_SIZE, sizeof(MyComplex));
-    initialize(allocation);
-    normalize(allocation);
+    MyComplex *cpu_alloc = (MyComplex *)calloc(FRAME_SIZE * NUM_FRAMES, sizeof(MyComplex));
+    initialize(cpu_alloc);
+    float initial_p = sum_p(cpu_alloc);
+    fprintf(stderr, "Made CPU initial frame \n");
     clock_t start = clock();
+    
+    int dev = findCudaDevice(argc, argv);
+
+    float2 * raw_allocation;
+    checkCudaErrors(cudaMalloc(&raw_allocation, FRAME_SIZE * NUM_FRAMES * sizeof(float2)));
+    checkCudaErrors(cudaMemcpy( raw_allocation, cpu_alloc, FRAME_SIZE * sizeof(MyComplex), cudaMemcpyHostToDevice ));
+    
+
+    float * pbuffer = createPbuffer(initial_p);
+
+
+    dim3 threads(LAYOUT_X, LAYOUT_Y);
+    dim3 grid(DISPATCH_X, DISPATCH_Y);
+
+    for(uint idx = 0; idx < NUM_FRAMES-1; idx++) {
+        fprintf(stderr, "FRAME START: %ld\n", idx);
+        stepper<<< grid, threads >>>(raw_allocation, pbuffer, idx);
+        fprintf(stderr, "FRAME START: %ld A\n", idx);
+        checkCudaErrors( cudaDeviceSynchronize() );
+        summer<<< grid, threads >>>(pbuffer);
+        checkCudaErrors( cudaDeviceSynchronize() );
+    }
+
+    checkCudaErrors( cudaDeviceSynchronize() );
+    checkCudaErrors(cudaMemcpy(  cpu_alloc, raw_allocation, NUM_FRAMES * FRAME_SIZE * sizeof(MyComplex), cudaMemcpyDeviceToHost ));
+
+    clock_t end = clock();
+    printf("%d / %d\n", CLOCK_TO_MILLIS(end - start), CLOCK_TO_MILLIS(end - start)/NUM_FRAMES);
+
+    FILE * outfile = fopen("cuda_out.data", "w");
+    fwrite(cpu_alloc, sizeof(MyComplex), NUM_FRAMES * FRAME_SIZE, outfile);
+    fclose(outfile);
+    cudaFree(raw_allocation);
+    free(cpu_alloc);
     return 0;
 }
